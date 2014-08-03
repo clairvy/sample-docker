@@ -6,10 +6,22 @@ NAME = sample-base
 SSH_USER = kitchen
 SSH_PORT = 22
 DOCKER_IP = $(shell boot2docker ip 2>&1 |awk -F: '/IP/{print $$2}'|sed -e 's/ //')
+GIT = git
+REPO = git@github.com:clairvy/sample-chef-repo.git
+BRANCH = erlang
+BERKS = bin/berks
+BUNDLE = bundle
+KNIFE_SOLO = LANG=C LC_ALL=C bin/knife solo
+KNIFE_SOLO_OPTS = -i ../id_rsa -p `cat ../CONTAINER_SSH_PORT`
+SED = sed
 
 default: build
 
 run: id_rsa
+
+login: id_rsa
+	$(SSH) $(SSH_OPTS) -i id_rsa -p `cat CONTAINER_SSH_PORT` $(SSH_USER)@$(DOCKER_IP)
+
 
 id_rsa: CONTAINER_SSH_PORT
 	$(DOCKER) cp `cat CONTAINER_ID`:/home/$(SSH_USER)/.ssh/id_rsa id_rsa
@@ -23,17 +35,27 @@ CONTAINER_ID:
 build:
 	$(DOCKER) build -t $(NAME) .
 
-login: id_rsa
-	$(SSH) $(SSH_OPTS) -i id_rsa -p `cat CONTAINER_SSH_PORT` $(SSH_USER)@$(DOCKER_IP)
+
+echo: CONTAINER_SSH_PORT
+	echo LANG=C LC_ALL=C knife solo prepare -i id_rsa -p `cat CONTAINER_SSH_PORT` $(SSH_USER)@$(DOCKER_IP)
+
+knife: id_rsa chef-repo/nodes/$(DOCKER_IP).json
+	cd chef-repo && $(KNIFE_SOLO) cook $(KNIFE_SOLO_OPTS) $(SSH_USER)@$(DOCKER_IP)
+
+chef-repo/nodes/$(DOCKER_IP).json: chef-repo
+	cd chef-repo && $(KNIFE_SOLO) prepare $(KNIFE_SOLO_OPTS) $(SSH_USER)@$(DOCKER_IP)
+	$(SED) -i.bak -e 's/^$$/    "recipe[sample-erlang]"/' chef-repo/nodes/$(DOCKER_IP).json
+
+chef-repo:
+	$(GIT) clone $(REPO) $@ && cd $@ && if [ x"$(BRANCH)" != x"" ]; then $(GIT) checkout $(BRANCH); fi
+	cd $@ && $(BUNDLE) install --binstubs=bin --path=vendor/bundle && $(BERKS) install
+
 
 destroy:
 	$(DOCKER) stop `cat CONTAINER_ID`
 	$(DOCKER) rm `cat CONTAINER_ID`
 	$(RM) CONTAINER_ID
 	$(RM) CONTAINER_SSH_PORT
-
-echo: CONTAINER_SSH_PORT
-	echo LANG=C LC_ALL=C knife solo prepare -i id_rsa -p `cat CONTAINER_SSH_PORT` $(SSH_USER)@$(DOCKER_IP)
 
 clean:
 	$(RM) $(RMF) *~ .*~
