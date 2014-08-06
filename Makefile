@@ -1,61 +1,55 @@
-SSH = LANG=C LC_ALL=C ssh
-SSH_OPTS = -o 'StrictHostKeyChecking=no'
-DOCKER_HOST = $(shell boot2docker up 2>&1 | awk -F= '/export/{print $$2}')
 DOCKER = docker -H $(DOCKER_HOST)
-NAME = sample-base
+DOCKER_HOST = $(shell boot2docker up 2>&1 | awk -F= '/export/{print $$2}')
+DOCKER_RUN_OPTS = --volumes-from my-data
+DOCKER_RUN_ANOTHER_OPTS = $(shell if [ -f docker_run_another_opt.conf ]; then cat docker_run_another_opt.conf; fi)
+DOCKER_RUN_INIT_CMD = $(shell if [ -f docker_run_init_cmd.conf ]; then cat docker_run_init_cmd.conf; fi)
+BASE = erlang
+SSH = LANG=C LC_ALL=C ssh
+SSH_OPTS = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $(SSH_PORT)
+SSH_PORT = $(shell $(DOCKER) port $(BASE) 22 | awk -F: '{print $$2}')
 SSH_USER = kitchen
-SSH_PORT = 22
-DOCKER_IP = $(shell boot2docker ip 2>&1 |awk -F: '/IP/{print $$2}'|sed -e 's/ //')
-GIT = git
-REPO = git@github.com:clairvy/sample-chef-repo.git
-BRANCH = erlang
-BERKS = bin/berks
-BUNDLE = bundle
-KNIFE_SOLO = LANG=C LC_ALL=C bin/knife solo
-KNIFE_SOLO_OPTS = -i ../id_rsa -p `cat ../CONTAINER_SSH_PORT`
-SED = sed
+SSH_HOST = $(shell boot2docker ip 2>&1 | awk -F: '/IP/{print $$2}' | sed -e 's/ //')
+AWK = awk
+GREP = grep
+IS_CONTAINER_EXIST = $(DOCKER) inspect $(BASE) | $(GREP) 'Pid' > /dev/null 2>&1
+IS_CONTAINER_STOP = $(DOCKER) inspect $(BASE) | $(AWK) '/Pid/{print $$2}' | $(GREP) '^0,' > /dev/null 2>&1
+GENERATED_FILES = keys/id_rsa
 
 default: build
 
-run: id_rsa
+# ----------------------------------------
+run: init start
+	if ! $(IS_CONTAINER_EXIST); then \
+  $(DOCKER) run $(DOCKER_RUN_OPTS) -d -P $(DOCKER_RUN_ANOTHER_OPTS) --name $(BASE) $(BASE); \
+  fi
 
-login: id_rsa
-	$(SSH) $(SSH_OPTS) -i id_rsa -p `cat CONTAINER_SSH_PORT` $(SSH_USER)@$(DOCKER_IP)
+start:
+	if $(IS_CONTAINER_STOP); then \
+  $(DOCKER) start $(BASE); \
+  fi
 
+init:
+	if [ -f docker_run_init_cmd.conf ]; then \
+  if ! $(IS_CONTAINER_EXIST); then \
+  $(DOCKER) run $(DOCKER_RUN_OPTS) -i -t --rm $(DOCKER_RUN_ANOTHER_OPTS) $(BASE) $(DOCKER_RUN_INIT_CMD); \
+  fi; \
+  fi
 
-id_rsa: CONTAINER_SSH_PORT
-	$(DOCKER) cp `cat CONTAINER_ID`:/home/$(SSH_USER)/.ssh/id_rsa id_rsa
+# ----------------------------------------
+login: keys/id_rsa
+	$(SSH) $(SSH_OPTS) -i keys/id_rsa $(SSH_USER)@$(SSH_HOST)
 
-CONTAINER_SSH_PORT: CONTAINER_ID
-	cat CONTAINER_ID|xargs -I {} $(DOCKER) port {} $(SSH_PORT) | awk -F: '{print $$2}' > $@
+keys/id_rsa:
+	$(DOCKER) cp $(BASE):/home/kitchen/.ssh/id_rsa $@
 
-CONTAINER_ID:
-	$(DOCKER) run -d -p $(SSH_PORT) $(NAME) > $@
-
+# ----------------------------------------
 build:
-	$(DOCKER) build -t $(NAME) .
-
-
-echo: CONTAINER_SSH_PORT
-	echo LANG=C LC_ALL=C knife solo prepare -i id_rsa -p `cat CONTAINER_SSH_PORT` $(SSH_USER)@$(DOCKER_IP)
-
-knife: id_rsa chef-repo/nodes/$(DOCKER_IP).json
-	cd chef-repo && $(KNIFE_SOLO) cook $(KNIFE_SOLO_OPTS) $(SSH_USER)@$(DOCKER_IP)
-
-chef-repo/nodes/$(DOCKER_IP).json: chef-repo
-	cd chef-repo && $(KNIFE_SOLO) prepare $(KNIFE_SOLO_OPTS) $(SSH_USER)@$(DOCKER_IP)
-	$(SED) -i.bak -e 's/^$$/    "recipe[sample-erlang]"/' chef-repo/nodes/$(DOCKER_IP).json
-
-chef-repo:
-	$(GIT) clone $(REPO) $@ && cd $@ && if [ x"$(BRANCH)" != x"" ]; then $(GIT) checkout $(BRANCH); fi
-	cd $@ && $(BUNDLE) install --binstubs=bin --path=vendor/bundle && $(BERKS) install
-
+	$(DOCKER) build -t $(BASE) .
 
 destroy:
-	$(DOCKER) stop `cat CONTAINER_ID`
-	$(DOCKER) rm `cat CONTAINER_ID`
-	$(RM) CONTAINER_ID
-	$(RM) CONTAINER_SSH_PORT
+	if $(IS_CONTAINER_EXIST); then \
+  $(DOCKER) stop $(BASE); $(DOCKER) rm $(BASE); \
+  fi
 
 clean:
-	$(RM) $(RMF) *~ .*~
+	$(RM) $(RMF) $(GENERATED_FILES)
