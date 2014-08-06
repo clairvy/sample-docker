@@ -2,7 +2,8 @@ SSH = LANG=C LC_ALL=C ssh
 SSH_OPTS = -o 'StrictHostKeyChecking=no'
 DOCKER_HOST = $(shell boot2docker up 2>&1 | awk -F= '/export/{print $$2}')
 DOCKER = docker -H $(DOCKER_HOST)
-NAME = sample-base
+DOCKER_RUN_OPTS = -p 80
+NAME = nginx
 SSH_USER = kitchen
 SSH_PORT = 22
 DOCKER_IP = $(shell boot2docker ip 2>&1 |awk -F: '/IP/{print $$2}'|sed -e 's/ //')
@@ -30,7 +31,7 @@ CONTAINER_SSH_PORT: CONTAINER_ID
 	cat CONTAINER_ID|xargs -I {} $(DOCKER) port {} $(SSH_PORT) | awk -F: '{print $$2}' > $@
 
 CONTAINER_ID:
-	$(DOCKER) run -d -p $(SSH_PORT) $(NAME) > $@
+	$(DOCKER) run $(DOCKER_RUN_OPTS) -d -p $(SSH_PORT) $(NAME) > $@
 
 build:
 	$(DOCKER) build -t $(NAME) .
