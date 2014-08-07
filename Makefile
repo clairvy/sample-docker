@@ -15,6 +15,7 @@ BUNDLE = bundle
 KNIFE_SOLO = LANG=C LC_ALL=C bin/knife solo
 KNIFE_SOLO_OPTS = -i ../id_rsa -p `cat ../CONTAINER_SSH_PORT`
 SED = sed
+STORAGE_VOLUME = my-data
 
 default: build
 
@@ -31,7 +32,7 @@ CONTAINER_SSH_PORT: CONTAINER_ID
 	cat CONTAINER_ID|xargs -I {} $(DOCKER) port {} $(SSH_PORT) | awk -F: '{print $$2}' > $@
 
 CONTAINER_ID:
-	$(DOCKER) run $(DOCKER_RUN_OPTS) -d -p $(SSH_PORT) $(NAME) > $@
+	$(DOCKER) run $(DOCKER_RUN_OPTS) -d -p $(SSH_PORT) --volumes-from $(STORAGE_VOLUME) $(NAME) > $@
 
 build:
 	$(DOCKER) build -t $(NAME) .
@@ -51,6 +52,12 @@ chef-repo:
 	$(GIT) clone $(REPO) $@ && cd $@ && if [ x"$(BRANCH)" != x"" ]; then $(GIT) checkout $(BRANCH); fi
 	cd $@ && $(BUNDLE) install --binstubs=bin --path=vendor/bundle && $(BERKS) install
 
+# shared folder
+share:
+	if ! $(DOCKER) inspect $(STORAGE_VOLUME) 2>&1 > /dev/null; then \
+    $(DOCKER) run -v /data --name $(STORAGE_VOLUME) busybox true; \
+  fi
+	$(DOCKER) run --rm -v /usr/local/bin/docker:/docker -v /var/run/docker.sock:/docker.sock svendowideit/samba $(STORAGE_VOLUME)
 
 destroy:
 	$(DOCKER) stop `cat CONTAINER_ID`
